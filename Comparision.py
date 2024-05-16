@@ -1,77 +1,61 @@
-
+#!/usr/bin/env python
+# coding: utf-8
 
 # In[1]:
 
 
-#Importing the necessary library
-import copy  # Importing the copy module
-import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import tensorflow as tf
+import matplotlib.pyplot as plt
 import seaborn as sns
 import scipy.stats as stats
-from sklearn import preprocessing, linear_model
 import statsmodels.api as sm
-from sklearn.model_selection import GridSearchCV, train_test_split
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error
-from sklearn.neural_network import MLPRegressor
+# Define the custom activation function
+def identity_activation(x):
+    return tf.identity(x)
+
+# Load the model with the custom_objects argument
+loaded_model_1 = tf.keras.models.load_model("my_model_1.h5", custom_objects={"identity_activation": identity_activation})
+loaded_model_2 = tf.keras.models.load_model("my_model_2.h5", custom_objects={"identity_activation": identity_activation})
 
 
 # In[2]:
 
 
-df2 = pd.read_excel('dataset2.xlsx')
-df3 = pd.read_excel('dataset3.xlsx')
-df4 = pd.read_excel('dataset4.xlsx')
+df = pd.read_excel('combined_data.xlsx')
+# Drop the extra index column
+df = df.drop(columns=['Unnamed: 0']) 
+df
 
-
-# ### Merging and Cleaning the dataframes
 
 # In[3]:
 
 
-#Dropping unnecessary columns
-df2 = df2.drop(columns=['Materials' , 'σy (MPa)'])
-df3 = df3.drop(columns=['Materials' , 'σy (MPa)'])
-df4 = df4.drop(columns=['Materials'])
 
-#Merging all the three dataframes
-merged_df = pd.concat([df2, df3, df4], ignore_index=True)
+# Adding columns for comparision metrics
+# For Model 1
+df['log_σu'] = df['σu (MPa)'].apply(lambda x: np.log(x))
+df['log_σf'] = df['σf (MPa)'].apply(lambda x: np.log(x))
+
+# For Model 2
+df['log_hb'] = df['HB'].apply(lambda x: np.log(x))
+df['square_ra'] = df['RA (%)'].apply(lambda x: x ** 2)
+
+# Rearranging the columns
+df = df[['E (GPa)', 'σu (MPa)','log_σu','σf (MPa)', 'log_σf' , 'εf' , 'RA (%)', 'square_ra', 'HB' , 'log_hb',  'σL (MPa)']
+       ]
+df
 
 
 # In[4]:
 
 
-# Drop rows with any NaN values
-merged_df_cleaned = merged_df.dropna()
-
-print("DataFrame after dropping rows with any NaN value:")
-merged_df_cleaned.describe()
+df.info()
 
 
 # In[5]:
-
-
-# Based on UTS
-
-def prediction_via_uts(row):
-    uts = row['σu (MPa)']
-    if uts <= 1100:
-        return 0.49 * uts - 58.61
-    else:
-        return 0.27 * uts + 183.35
-        
-
-
-
-# Based on HB
-def prediction_via_HB(row):
-    hb = row['HB']
-    return 1.44 * hb + 9.38
-
 
 
 #Based on FPCM and USM
@@ -120,161 +104,113 @@ def prediction_via_USM(row):
     return result
 
 
-
-
-# Apply the custom function to each row and assign the result to new columns
-merged_df_cleaned = merged_df_cleaned.copy()  # Create a copy of the DataFrame
-merged_df_cleaned['Fatigue_UTS'] = merged_df_cleaned.apply(prediction_via_uts, axis=1)  # Apply along rows
-merged_df_cleaned['Fatigue_HB'] = merged_df_cleaned.apply(prediction_via_HB, axis=1)  # Apply along rows
-merged_df_cleaned['Fatigue_FPCM'] = merged_df_cleaned.apply(prediction_via_FPCM, axis=1)  # Apply along rows
-merged_df_cleaned['Fatigue_USM'] = merged_df_cleaned.apply(prediction_via_USM, axis=1)  # Apply along rows
-
-
-print("DataFrame with new columns:")
-merged_df_cleaned
-
-
 # In[6]:
 
 
+import math
+from sklearn.preprocessing import StandardScaler
+# Predicting values via different methods
+#Conventional Methods
+df['Fatigue_FPCM'] = df.apply(prediction_via_FPCM, axis=1)  # Apply along rows
+df['Fatigue_USM'] = df.apply(prediction_via_USM, axis=1)  # Apply along rows
+
+# Load your trained StandardScaler for each model
+
+
+
+
+#Neural Network model-1
+df_model_1 = df[['log_σu', 'log_σf', 'εf']]
+
+scaler_model_1 = StandardScaler()
+scaler_model_1 = scaler_model_1.fit(df_model_1)  # X_train_model_1 should be the data used to train model 1
+
+scaled_df_model_1 = pd.DataFrame(scaler_model_1.transform(df_model_1), columns=df_model_1.columns)
+predictions_1 = loaded_model_1.predict(scaled_df_model_1)
+df['Model-1'] =  predictions_1
+
+#Neural Network model-2
+df_model_2 = df[['log_hb', 'RA (%)', 'square_ra']]
+
+scaler_model_2 = StandardScaler()
+scaler_model_2 = scaler_model_2.fit(df_model_2)  # X_train_model_2 should be the data used to train model 2
+
+scaled_df_model_2 = pd.DataFrame(scaler_model_2.transform(df_model_2), columns=df_model_2.columns)
+predictions_2 = loaded_model_2.predict(scaled_df_model_2)
+df['Model-2'] =  predictions_2
+
+
+
+print("DataFrame with new columns:")
+df
+
+
+# In[7]:
+
+
 # Calculate absolute differences for each method
-merged_df_cleaned['abs_diff_model1'] = abs(merged_df_cleaned['σL (MPa)'] - merged_df_cleaned['Fatigue_UTS'])
-merged_df_cleaned['abs_diff_model2'] = abs(merged_df_cleaned['σL (MPa)'] - merged_df_cleaned['Fatigue_HB'])
-merged_df_cleaned['abs_diff_model3'] = abs(merged_df_cleaned['σL (MPa)'] - merged_df_cleaned['Fatigue_FPCM'])
-merged_df_cleaned['abs_diff_model4'] = abs(merged_df_cleaned['σL (MPa)'] - merged_df_cleaned['Fatigue_USM'])
+df['abs_diff_model1'] = abs(df['σL (MPa)'] - df['Model-1'])
+df['abs_diff_model2'] = abs(df['σL (MPa)'] - df['Model-2'])
+df['abs_diff_model3'] = abs(df['σL (MPa)'] - df['Fatigue_FPCM'])
+df['abs_diff_model4'] = abs(df['σL (MPa)'] - df['Fatigue_USM'])
 
 
 # Define deviation thresholds
 #For Model1
-deviation_10_percent_model1 = 0.10 * merged_df_cleaned['Fatigue_UTS']
-deviation_15_percent_model1 = 0.15 * merged_df_cleaned['Fatigue_UTS']
-deviation_20_percent_model1 = 0.20 * merged_df_cleaned['Fatigue_UTS']
+deviation_10_percent_model1 = 0.10 * df['Model-1']
+deviation_15_percent_model1 = 0.15 * df['Model-1']
+deviation_20_percent_model1 = 0.20 * df['Model-1']
 
 #For Model2
-deviation_10_percent_model2 = 0.10 * merged_df_cleaned['Fatigue_HB']
-deviation_15_percent_model2 = 0.15 * merged_df_cleaned['Fatigue_HB']
-deviation_20_percent_model2 = 0.20 * merged_df_cleaned['Fatigue_HB']
+deviation_10_percent_model2 = 0.10 * df['Model-2']
+deviation_15_percent_model2 = 0.15 * df['Model-2']
+deviation_20_percent_model2 = 0.20 * df['Model-2']
 
 #For Model3
-deviation_10_percent_model3 = 0.10 * merged_df_cleaned['Fatigue_FPCM']
-deviation_15_percent_model3 = 0.15 * merged_df_cleaned['Fatigue_FPCM']
-deviation_20_percent_model3 = 0.20 * merged_df_cleaned['Fatigue_FPCM']
+deviation_10_percent_model3 = 0.10 * df['Fatigue_FPCM']
+deviation_15_percent_model3 = 0.15 * df['Fatigue_FPCM']
+deviation_20_percent_model3 = 0.20 * df['Fatigue_FPCM']
 
 
 #For Model4
-deviation_10_percent_model4 = 0.10 * merged_df_cleaned['Fatigue_USM']
-deviation_15_percent_model4 = 0.15 * merged_df_cleaned['Fatigue_USM']
-deviation_20_percent_model4 = 0.20 * merged_df_cleaned['Fatigue_USM']
+deviation_10_percent_model4 = 0.10 * df['Fatigue_USM']
+deviation_15_percent_model4 = 0.15 * df['Fatigue_USM']
+deviation_20_percent_model4 = 0.20 * df['Fatigue_USM']
 
 
 # Calculate the percentage of values within the specified deviations for each method
-merged_df_cleaned['within_10_percent_model1'] = ((merged_df_cleaned['abs_diff_model1'] <= deviation_10_percent_model1) * 100).astype(int)
-merged_df_cleaned['within_15_percent_model1'] = ((merged_df_cleaned['abs_diff_model1'] <= deviation_15_percent_model1) * 100).astype(int)
-merged_df_cleaned['within_20_percent_model1'] = ((merged_df_cleaned['abs_diff_model1'] <= deviation_20_percent_model1) * 100).astype(int)
+df['within_10_percent_model1'] = ((df['abs_diff_model1'] <= deviation_10_percent_model1) * 100).astype(int)
+df['within_15_percent_model1'] = ((df['abs_diff_model1'] <= deviation_15_percent_model1) * 100).astype(int)
+df['within_20_percent_model1'] = ((df['abs_diff_model1'] <= deviation_20_percent_model1) * 100).astype(int)
 
-merged_df_cleaned['within_10_percent_model2'] = ((merged_df_cleaned['abs_diff_model2'] <= deviation_10_percent_model2) * 100).astype(int)
-merged_df_cleaned['within_15_percent_model2'] = ((merged_df_cleaned['abs_diff_model2'] <= deviation_15_percent_model2) * 100).astype(int)
-merged_df_cleaned['within_20_percent_model2'] = ((merged_df_cleaned['abs_diff_model2'] <= deviation_20_percent_model2) * 100).astype(int)
+df['within_10_percent_model2'] = ((df['abs_diff_model2'] <= deviation_10_percent_model2) * 100).astype(int)
+df['within_15_percent_model2'] = ((df['abs_diff_model2'] <= deviation_15_percent_model2) * 100).astype(int)
+df['within_20_percent_model2'] = ((df['abs_diff_model2'] <= deviation_20_percent_model2) * 100).astype(int)
 
-merged_df_cleaned['within_10_percent_model3'] = ((merged_df_cleaned['abs_diff_model3'] <= deviation_10_percent_model3) * 100).astype(int)
-merged_df_cleaned['within_15_percent_model3'] = ((merged_df_cleaned['abs_diff_model3'] <= deviation_15_percent_model3) * 100).astype(int)
-merged_df_cleaned['within_20_percent_model3'] = ((merged_df_cleaned['abs_diff_model3'] <= deviation_20_percent_model3) * 100).astype(int)
+df['within_10_percent_model3'] = ((df['abs_diff_model3'] <= deviation_10_percent_model3) * 100).astype(int)
+df['within_15_percent_model3'] = ((df['abs_diff_model3'] <= deviation_15_percent_model3) * 100).astype(int)
+df['within_20_percent_model3'] = ((df['abs_diff_model3'] <= deviation_20_percent_model3) * 100).astype(int)
 
-merged_df_cleaned['within_10_percent_model4'] = ((merged_df_cleaned['abs_diff_model4'] <= deviation_10_percent_model4) * 100).astype(int)
-merged_df_cleaned['within_15_percent_model4'] = ((merged_df_cleaned['abs_diff_model4'] <= deviation_15_percent_model4) * 100).astype(int)
-merged_df_cleaned['within_20_percent_model4'] = ((merged_df_cleaned['abs_diff_model4'] <= deviation_20_percent_model4) * 100).astype(int)
+df['within_10_percent_model4'] = ((df['abs_diff_model4'] <= deviation_10_percent_model4) * 100).astype(int)
+df['within_15_percent_model4'] = ((df['abs_diff_model4'] <= deviation_15_percent_model4) * 100).astype(int)
+df['within_20_percent_model4'] = ((df['abs_diff_model4'] <= deviation_20_percent_model4) * 100).astype(int)
 
 
-# Calculate standard deviation for each method
-std_dev_model1 = merged_df_cleaned['abs_diff_model1'].std()
-std_dev_model2 = merged_df_cleaned['abs_diff_model2'].std()
-std_dev_model3 = merged_df_cleaned['abs_diff_model3'].std()
-std_dev_model4 = merged_df_cleaned['abs_diff_model4'].std()
+
 
 # Create a DataFrame to display the results
 results_df = pd.DataFrame({
-    'Model': ['UTS Model', 'HB Model', 'FPCM Model', 'USM Model'],
-    'Within 10%': [merged_df_cleaned['within_10_percent_model1'].mean(), merged_df_cleaned['within_10_percent_model2'].mean(), merged_df_cleaned['within_10_percent_model3'].mean(), merged_df_cleaned['within_10_percent_model4'].mean()],
-    'Within 15%': [merged_df_cleaned['within_15_percent_model1'].mean(), merged_df_cleaned['within_15_percent_model2'].mean(), merged_df_cleaned['within_15_percent_model3'].mean(), merged_df_cleaned['within_15_percent_model4'].mean()],
-    'Within 20%': [merged_df_cleaned['within_20_percent_model1'].mean(), merged_df_cleaned['within_20_percent_model2'].mean(), merged_df_cleaned['within_20_percent_model3'].mean(), merged_df_cleaned['within_20_percent_model4'].mean()],
-    'Standard Deviation': [std_dev_model1, std_dev_model2, std_dev_model3, std_dev_model4]
+    'Model': ['Model-1', 'Model-2', 'FPCM Model', 'USM Model'],
+    'Within 10%': [df['within_10_percent_model1'].mean(), df['within_10_percent_model2'].mean(), df['within_10_percent_model3'].mean(),df['within_10_percent_model4'].mean()],
+    'Within 15%': [df['within_15_percent_model1'].mean(), df['within_15_percent_model2'].mean(), df['within_15_percent_model3'].mean(), df['within_15_percent_model4'].mean()],
+    'Within 20%': [df['within_20_percent_model1'].mean(), df['within_20_percent_model2'].mean(), df['within_20_percent_model3'].mean(), df['within_20_percent_model4'].mean()],
+
 })
 
 results_df
 
 
 # ### Plotting the graph
-
-# In[7]:
-
-
-import numpy as np
-import matplotlib.pyplot as plt
-
-# Step 1: Select a set of randomly picked indices
-num_points = 10  # Number of randomly picked points
-random_indices = np.random.choice(len(merged_df), num_points, replace=False)
-
-# Step 2: Calculate relative error for each model at the selected indices
-relative_errors_uts = (merged_df_cleaned.iloc[random_indices]['Fatigue_UTS'] - merged_df_cleaned.iloc[random_indices]['σL (MPa)']) / merged_df_cleaned.iloc[random_indices]['σL (MPa)']
-relative_errors_hb = (merged_df_cleaned.iloc[random_indices]['Fatigue_HB'] - merged_df_cleaned.iloc[random_indices]['σL (MPa)']) / merged_df_cleaned.iloc[random_indices]['σL (MPa)']
-relative_errors_fpcm = (merged_df_cleaned.iloc[random_indices]['Fatigue_FPCM'] - merged_df_cleaned.iloc[random_indices]['σL (MPa)']) / merged_df_cleaned.iloc[random_indices]['σL (MPa)']
-relative_errors_usm = (merged_df_cleaned.iloc[random_indices]['Fatigue_USM'] - merged_df_cleaned.iloc[random_indices]['σL (MPa)']) / merged_df_cleaned.iloc[random_indices]['σL (MPa)']
-
-# Step 3: Plot line graph showing the variation of relative error for each model on separate subplots
-fig, axes = plt.subplots(4, 1, figsize=(10, 20))
-
-# Plot for UTS
-axes[0].plot(random_indices, relative_errors_uts, label='UTS')
-axes[0].axhline(y=0, color='r', linestyle='-', label='0', linewidth=1)  # Add red horizontal line at y=0
-axes[0].axhline(y=0.2, color='k', linestyle='-', label='+0.2', linewidth=1)
-axes[0].axhline(y=-0.2, color='k', linestyle='-', label='-0.2', linewidth=1)
-axes[0].axhline(y=0.4, color='k', linestyle='--', label='+0.4', linewidth=1)
-axes[0].axhline(y=-0.4, color='k', linestyle='--', label='-0.4', linewidth=1)
-axes[0].set_xlabel('Index')
-axes[0].set_ylabel('Relative Error')
-axes[0].set_title('Relative Error Comparison for Fatigue_UTS')
-axes[0].legend()
-
-# Plot for HB
-axes[1].plot(random_indices, relative_errors_hb, label='HB')
-axes[1].axhline(y=0, color='r', linestyle='-', label='0', linewidth=1)  # Add red horizontal line at y=0
-axes[1].axhline(y=0.2, color='k', linestyle='-', label='+0.2', linewidth=1)
-axes[1].axhline(y=-0.2, color='k', linestyle='-', label='-0.2', linewidth=1)
-axes[1].axhline(y=0.4, color='k', linestyle='--', label='+0.4', linewidth=1)
-axes[1].axhline(y=-0.4, color='k', linestyle='--', label='-0.4', linewidth=1)
-axes[1].set_xlabel('Index')
-axes[1].set_ylabel('Relative Error')
-axes[1].set_title('Relative Error Comparison for Fatigue_HB')
-axes[1].legend()
-
-# Plot for FPCM
-axes[2].plot(random_indices, relative_errors_fpcm, label='FPCM')
-axes[2].axhline(y=0, color='r', linestyle='-', label='0', linewidth=1)  # Add red horizontal line at y=0
-axes[2].axhline(y=0.2, color='k', linestyle='-', label='+0.2', linewidth=1)
-axes[2].axhline(y=-0.2, color='k', linestyle='-', label='-0.2', linewidth=1)
-axes[2].axhline(y=0.4, color='k', linestyle='--', label='+0.4', linewidth=1)
-axes[2].axhline(y=-0.4, color='k', linestyle='--', label='-0.4', linewidth=1)
-axes[2].set_xlabel('Index')
-axes[2].set_ylabel('Relative Error')
-axes[2].set_title('Relative Error Comparison for Fatigue_FPCM')
-axes[2].legend()
-
-# Plot for USM
-axes[3].plot(random_indices, relative_errors_usm, label='USM')
-axes[3].axhline(y=0, color='r', linestyle='-', label='0', linewidth=1)  # Add red horizontal line at y=0
-axes[3].axhline(y=0.2, color='k', linestyle='-', label='+0.2', linewidth=1)
-axes[3].axhline(y=-0.2, color='k', linestyle='-', label='-0.2', linewidth=1)
-axes[3].axhline(y=0.4, color='k', linestyle='--', label='+0.4', linewidth=1)
-axes[3].axhline(y=-0.4, color='k', linestyle='--', label='-0.4', linewidth=1)
-axes[3].set_xlabel('Index')
-axes[3].set_ylabel('Relative Error')
-axes[3].set_title('Relative Error Comparison for Fatigue_USM')
-axes[3].legend()
-
-plt.tight_layout()
-plt.show()
-
 
 # In[ ]:
 
